@@ -65,7 +65,6 @@ readonly class RecyclerModuleController
             'depthSelection' => ($sessionData['depthSelection'] ?? false) ?: '0',
             'tableSelection' => ($sessionData['tableSelection'] ?? false) ?: '',
         ]);
-        $this->pageRenderer->addInlineLanguageLabelFile('EXT:recycler/Resources/Private/Language/locallang.xlf');
         $this->pageRenderer->loadJavaScriptModule('@typo3/recycler/recycler.js');
         $this->pageRenderer->loadJavaScriptModule('@typo3/backend/multi-record-selection.js');
 
