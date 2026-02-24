@@ -1,5 +1,6 @@
 <?php
 
+use TYPO3\CMS\Recycler\Controller\RecyclerAjaxController;
 use TYPO3\CMS\Recycler\Controller\RecyclerModuleController;
 
 /**
@@ -19,6 +20,30 @@ return [
             '_default' => [
                 'target' => RecyclerModuleController::class . '::handleRequest',
             ],
+            'getTables' => [
+                'target' => RecyclerAjaxController::class . '::getTablesAction',
+                'methods' => ['GET'],
+                'ajax' => true,
+            ],
+            'getDeletedRecords' => [
+                'target' => RecyclerAjaxController::class . '::getDeletedRecordsAction',
+                'methods' => ['GET'],
+                'ajax' => true,
+            ],
+            'undoRecords' => [
+                'target' => RecyclerAjaxController::class . '::undoRecordsAction',
+                'methods' => ['POST'],
+                'ajax' => true,
+            ],
+            'deleteRecords' => [
+                'target' => RecyclerAjaxController::class . '::deleteRecordsAction',
+                'methods' => ['POST'],
+                'ajax' => true,
+            ],
+        ],
+        'moduleData' => [
+            'depthSelection' => 0,
+            'tableSelection' => '',
         ],
     ],
 ];

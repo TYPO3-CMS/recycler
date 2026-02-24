@@ -48,11 +48,6 @@ use TYPO3\CMS\Recycler\Domain\Model\DeletedRecords;
 #[AsController]
 class RecyclerAjaxController
 {
-    /**
-     * The local configuration array
-     */
-    protected array $conf = [];
-
     public function __construct(
         protected readonly BackendViewFactory $backendViewFactory,
         #[Autowire(service: 'cache.runtime')]
@@ -63,104 +58,98 @@ class RecyclerAjaxController
         protected readonly TcaSchemaFactory $tcaSchemaFactory,
     ) {}
 
-    /**
-     * The main dispatcher function. Collect data and prepare HTML output.
-     */
-    public function dispatch(ServerRequestInterface $request): ResponseInterface
+    public function getTablesAction(ServerRequestInterface $request): ResponseInterface
     {
-        $parsedBody = $request->getParsedBody();
         $queryParams = $request->getQueryParams();
+        $startUid = (int)($queryParams['startUid'] ?? 0);
+        $depth = (int)($queryParams['depth'] ?? 0);
 
-        $this->conf['action'] = $parsedBody['action'] ?? $queryParams['action'] ?? null;
-        $this->conf['table'] = $parsedBody['table'] ?? $queryParams['table'] ?? '';
-        $this->conf['limit'] = MathUtility::forceIntegerInRange(
+        return new JsonResponse($this->getTables($startUid, $depth));
+    }
+
+    public function getDeletedRecordsAction(ServerRequestInterface $request): ResponseInterface
+    {
+        $queryParams = $request->getQueryParams();
+        $table = (string)($queryParams['table'] ?? '');
+        $limit = MathUtility::forceIntegerInRange(
             (int)($this->getBackendUser()->getTSConfig()['mod.']['recycler.']['recordsPageLimit'] ?? 25),
             1
         );
-        $this->conf['start'] = (int)($parsedBody['start'] ?? $queryParams['start'] ?? 0);
-        $this->conf['filterTxt'] = $parsedBody['filterTxt'] ?? $queryParams['filterTxt'] ?? '';
-        $this->conf['startUid'] = (int)($parsedBody['startUid'] ?? $queryParams['startUid'] ?? 0);
-        $this->conf['depth'] = (int)($parsedBody['depth'] ?? $queryParams['depth'] ?? 0);
-        $this->conf['records'] = $parsedBody['records'] ?? $queryParams['records'] ?? null;
-        $this->conf['recursive'] = (bool)($parsedBody['recursive'] ?? $queryParams['recursive'] ?? false);
+        $start = (int)($queryParams['start'] ?? 0);
+        $filterTxt = (string)($queryParams['filterTxt'] ?? '');
+        $startUid = (int)($queryParams['startUid'] ?? 0);
+        $depth = (int)($queryParams['depth'] ?? 0);
 
-        $content = null;
-        // Determine the scripts to execute
-        switch ($this->conf['action']) {
-            case 'getTables':
-                $this->setDataInSession(['depthSelection' => $this->conf['depth']]);
+        $model = GeneralUtility::makeInstance(DeletedRecords::class);
+        $model->loadData($startUid, $table, $depth, $start . ',' . $limit, $filterTxt);
+        $deletedRowsArray = $model->getDeletedRows();
 
-                $content = $this->getTables($this->conf['startUid'], $this->conf['depth']);
-                break;
-            case 'getDeletedRecords':
-                $this->setDataInSession([
-                    'tableSelection' => $this->conf['table'],
-                    'depthSelection' => $this->conf['depth'],
-                    'resultLimit' => $this->conf['limit'],
-                ]);
+        $model = GeneralUtility::makeInstance(DeletedRecords::class);
+        $totalDeleted = $model->getTotalCount($startUid, $table, $depth, $filterTxt);
 
-                $model = GeneralUtility::makeInstance(DeletedRecords::class);
-                $model->loadData($this->conf['startUid'], $this->conf['table'], $this->conf['depth'], $this->conf['start'] . ',' . $this->conf['limit'], $this->conf['filterTxt']);
-                $deletedRowsArray = $model->getDeletedRows();
+        $view = $this->backendViewFactory->create($request);
+        $view->assign('showTableHeader', empty($table));
+        $view->assign('showTableName', $this->getBackendUser()->shallDisplayDebugInformation());
+        $view->assign('allowDelete', $this->isDeleteAllowed());
+        $view->assign('groupedRecords', $this->transform($deletedRowsArray));
 
-                $model = GeneralUtility::makeInstance(DeletedRecords::class);
-                $totalDeleted = $model->getTotalCount($this->conf['startUid'], $this->conf['table'], $this->conf['depth'], $this->conf['filterTxt']);
+        return new JsonResponse([
+            'rows' => $view->render('Ajax/RecordsTable'),
+            'totalItems' => $totalDeleted,
+        ]);
+    }
 
-                $view = $this->backendViewFactory->create($request);
-                $view->assign('showTableHeader', empty($this->conf['table']));
-                $view->assign('showTableName', $this->getBackendUser()->shallDisplayDebugInformation());
-                $view->assign('allowDelete', $this->isDeleteAllowed());
-                $view->assign('groupedRecords', $this->transform($deletedRowsArray));
-                $content = [
-                    'rows' => $view->render('Ajax/RecordsTable'),
-                    'totalItems' => $totalDeleted,
-                ];
-                break;
-            case 'undoRecords':
-                if (empty($this->conf['records']) || !is_array($this->conf['records'])) {
-                    $content = [
-                        'success' => false,
-                        'message' => LocalizationUtility::translate('flashmessage.delete.norecordsselected', 'recycler'),
-                    ];
-                    break;
-                }
+    public function undoRecordsAction(ServerRequestInterface $request): ResponseInterface
+    {
+        $parsedBody = $request->getParsedBody();
+        $records = $parsedBody['records'] ?? null;
+        $recursive = (bool)($parsedBody['recursive'] ?? false);
 
-                $model = GeneralUtility::makeInstance(DeletedRecords::class);
-                $affectedRecords = $model->undeleteData($this->conf['records'], (bool)$this->conf['recursive']);
-                $messageKey = 'flashmessage.undo.' . ($affectedRecords !== false ? 'success' : 'failure') . '.' . ((int)$affectedRecords === 1 ? 'singular' : 'plural');
-                $content = [
-                    'success' => true,
-                    'message' => sprintf((string)LocalizationUtility::translate($messageKey, 'recycler'), $affectedRecords),
-                ];
-                break;
-            case 'deleteRecords':
-                if (!$this->isDeleteAllowed()) {
-                    $content = [
-                        'success' => false,
-                        'message' => LocalizationUtility::translate('flashmessage.delete.unauthorized', 'recycler'),
-                    ];
-                    break;
-                }
-
-                if (empty($this->conf['records']) || !is_array($this->conf['records'])) {
-                    $content = [
-                        'success' => false,
-                        'message' => LocalizationUtility::translate('flashmessage.delete.norecordsselected', 'recycler'),
-                    ];
-                    break;
-                }
-
-                $model = GeneralUtility::makeInstance(DeletedRecords::class);
-                $success = $model->deleteData($this->conf['records']);
-                $affectedRecords = count($this->conf['records']);
-                $messageKey = 'flashmessage.delete.' . ($success ? 'success' : 'failure') . '.' . ($affectedRecords === 1 ? 'singular' : 'plural');
-                $content = [
-                    'success' => $success,
-                    'message' => sprintf((string)LocalizationUtility::translate($messageKey, 'recycler'), $affectedRecords),
-                ];
-                break;
+        if (empty($records) || !is_array($records)) {
+            return new JsonResponse([
+                'success' => false,
+                'message' => LocalizationUtility::translate('flashmessage.delete.norecordsselected', 'recycler'),
+            ]);
         }
-        return new JsonResponse($content);
+
+        $model = GeneralUtility::makeInstance(DeletedRecords::class);
+        $affectedRecords = $model->undeleteData($records, $recursive);
+        $messageKey = 'flashmessage.undo.' . ($affectedRecords !== false ? 'success' : 'failure') . '.' . ((int)$affectedRecords === 1 ? 'singular' : 'plural');
+
+        return new JsonResponse([
+            'success' => true,
+            'message' => sprintf((string)LocalizationUtility::translate($messageKey, 'recycler'), $affectedRecords),
+        ]);
+    }
+
+    public function deleteRecordsAction(ServerRequestInterface $request): ResponseInterface
+    {
+        if (!$this->isDeleteAllowed()) {
+            return new JsonResponse([
+                'success' => false,
+                'message' => LocalizationUtility::translate('flashmessage.delete.unauthorized', 'recycler'),
+            ]);
+        }
+
+        $parsedBody = $request->getParsedBody();
+        $records = $parsedBody['records'] ?? null;
+
+        if (empty($records) || !is_array($records)) {
+            return new JsonResponse([
+                'success' => false,
+                'message' => LocalizationUtility::translate('flashmessage.delete.norecordsselected', 'recycler'),
+            ]);
+        }
+
+        $model = GeneralUtility::makeInstance(DeletedRecords::class);
+        $success = $model->deleteData($records);
+        $affectedRecords = count($records);
+        $messageKey = 'flashmessage.delete.' . ($success ? 'success' : 'failure') . '.' . ($affectedRecords === 1 ? 'singular' : 'plural');
+
+        return new JsonResponse([
+            'success' => $success,
+            'message' => sprintf((string)LocalizationUtility::translate($messageKey, 'recycler'), $affectedRecords),
+        ]);
     }
 
     protected function isDeleteAllowed(): bool
@@ -258,21 +247,6 @@ class RecyclerAjaxController
             $this->runtimeCache->set($cacheId, $userData);
         }
         return $userData ?? [];
-    }
-
-    /**
-     * Sets data in the session of the current backend user.
-     *
-     * @param array $data The data to be stored in the session
-     */
-    protected function setDataInSession(array $data): void
-    {
-        $beUser = $this->getBackendUser();
-        $recyclerUC = $beUser->uc['tx_recycler'] ?? [];
-        if (!empty(array_diff_assoc($data, $recyclerUC))) {
-            $beUser->uc['tx_recycler'] = array_merge($recyclerUC, $data);
-            $beUser->writeUC();
-        }
     }
 
     /**

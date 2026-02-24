@@ -56,14 +56,14 @@ readonly class RecyclerModuleController
         // read configuration
         $recordsPageLimit = MathUtility::forceIntegerInRange((int)($backendUser->getTSConfig()['mod.']['recycler.']['recordsPageLimit'] ?? 25), 1);
         $allowDelete = $backendUser->isAdmin() || ($backendUser->getTSConfig()['mod.']['recycler.']['allowDelete'] ?? false);
-        $sessionData = $backendUser->uc['tx_recycler'] ?? [];
+        $moduleData = $request->getAttribute('moduleData');
 
         $this->pageRenderer->addInlineSettingArray('Recycler', [
             'pagingSize' => $recordsPageLimit,
             'startUid' => $id,
             'deleteDisable' => !$allowDelete,
-            'depthSelection' => ($sessionData['depthSelection'] ?? false) ?: '0',
-            'tableSelection' => ($sessionData['tableSelection'] ?? false) ?: '',
+            'depthSelection' => (string)$moduleData->get('depthSelection'),
+            'tableSelection' => (string)$moduleData->get('tableSelection'),
         ]);
         $this->pageRenderer->loadJavaScriptModule('@typo3/recycler/recycler.js');
         $this->pageRenderer->loadJavaScriptModule('@typo3/backend/multi-record-selection.js');

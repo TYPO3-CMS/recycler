@@ -50,19 +50,18 @@ final class RecyclerAjaxControllerTest extends FunctionalTestCase
     }
 
     #[Test]
-    public function dispatchWithDeleteRecordsActionDoesNothingIfUserLacksDeletionPermissions(): void
+    public function deleteRecordsActionDoesNothingIfUserLacksDeletionPermissions(): void
     {
         $this->setUpBackendUser(2);
 
         $request = new ServerRequest('https://typo3-testing.local', 'POST');
-        $request = $request->withParsedBody(['action' => 'deleteRecords']);
 
         $expected = [
             'success' => false,
             'message' => LocalizationUtility::translate('flashmessage.delete.unauthorized', 'recycler'),
         ];
 
-        $actual = $this->subject->dispatch($request);
+        $actual = $this->subject->deleteRecordsAction($request);
 
         self::assertInstanceOf(JsonResponse::class, $actual);
         self::assertJsonStringEqualsJsonString(
@@ -74,27 +73,26 @@ final class RecyclerAjaxControllerTest extends FunctionalTestCase
     /**
      * @return \Generator<string, array{int}>
      */
-    public static function dispatchWithDeleteRecordsActionDoesNothingIfNoRecordsAreProvidedInRequestDataProvider(): \Generator
+    public static function deleteRecordsActionDoesNothingIfNoRecordsAreProvidedInRequestDataProvider(): \Generator
     {
         yield 'admin' => [1];
         yield 'permitted editor with TSconfig' => [3];
     }
 
-    #[DataProvider('dispatchWithDeleteRecordsActionDoesNothingIfNoRecordsAreProvidedInRequestDataProvider')]
+    #[DataProvider('deleteRecordsActionDoesNothingIfNoRecordsAreProvidedInRequestDataProvider')]
     #[Test]
-    public function dispatchWithDeleteRecordsActionDoesNothingIfNoRecordsAreProvidedInRequest(int $backendUser): void
+    public function deleteRecordsActionDoesNothingIfNoRecordsAreProvidedInRequest(int $backendUser): void
     {
         $this->setUpBackendUser($backendUser);
 
         $request = new ServerRequest('https://typo3-testing.local', 'POST');
-        $request = $request->withParsedBody(['action' => 'deleteRecords']);
 
         $expected = [
             'success' => false,
             'message' => LocalizationUtility::translate('flashmessage.delete.norecordsselected', 'recycler'),
         ];
 
-        $actual = $this->subject->dispatch($request);
+        $actual = $this->subject->deleteRecordsAction($request);
 
         self::assertInstanceOf(JsonResponse::class, $actual);
         self::assertJsonStringEqualsJsonString(
@@ -103,7 +101,7 @@ final class RecyclerAjaxControllerTest extends FunctionalTestCase
         );
     }
 
-    public static function dispatchWithDeleteRecordsActionDeletesGivenRecordsWherePermissionsAreGivenDataProvider(): \Generator
+    public static function deleteRecordsActionDeletesGivenRecordsWherePermissionsAreGivenDataProvider(): \Generator
     {
         yield 'admin' => [
             'backendUser' => 1,
@@ -148,9 +146,9 @@ final class RecyclerAjaxControllerTest extends FunctionalTestCase
      * @param array{success: bool, message: string} $expectedResponse
      * @param array<string, DatabaseState> $expectedDatabaseState
      */
-    #[DataProvider('dispatchWithDeleteRecordsActionDeletesGivenRecordsWherePermissionsAreGivenDataProvider')]
+    #[DataProvider('deleteRecordsActionDeletesGivenRecordsWherePermissionsAreGivenDataProvider')]
     #[Test]
-    public function dispatchWithDeleteRecordsActionDeletesGivenRecordsWherePermissionsAreGiven(
+    public function deleteRecordsActionDeletesGivenRecordsWherePermissionsAreGiven(
         int $backendUser,
         array $records,
         ?array $expectedResponse,
@@ -160,11 +158,10 @@ final class RecyclerAjaxControllerTest extends FunctionalTestCase
 
         $request = new ServerRequest('https://typo3-testing.local', 'POST');
         $request = $request->withParsedBody([
-            'action' => 'deleteRecords',
             'records' => $records,
         ]);
 
-        $actual = $this->subject->dispatch($request);
+        $actual = $this->subject->deleteRecordsAction($request);
 
         self::assertInstanceOf(JsonResponse::class, $actual);
         if ($expectedResponse !== null) {
