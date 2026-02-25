@@ -76,7 +76,7 @@ class DeletedRecords
      * @param string $limit MySQL LIMIT
      * @param string $filter Filter text
      */
-    public function loadData($id, string $table, $depth, $limit = '', $filter = ''): self
+    public function loadData(int $id, string $table, int $depth, string $limit = '', string $filter = ''): self
     {
         // set the limit
         $this->limit = trim($limit);
@@ -110,9 +110,8 @@ class DeletedRecords
      * @param string $table Tablename from record
      * @param int $depth How many levels recursive
      * @param string $filter Filter text
-     * @return int
      */
-    public function getTotalCount($id, $table, $depth, $filter): int
+    public function getTotalCount(int $id, string $table, int $depth, string $filter): int
     {
         $deletedRecords = $this->loadData($id, $table, $depth, '', $filter)->getDeletedRows();
         $countTotal = 0;
@@ -311,21 +310,23 @@ class DeletedRecords
     /**
      * Delete element from any table
      *
-     * @param array|null $recordsArray Representation of the records
+     * @param list<string> $recordsArray Representation of the records as "table:uid" strings
+     * @return int Number of records successfully deleted
      */
-    public function deleteData(?array $recordsArray): bool
+    public function deleteData(array $recordsArray): int
     {
-        if (is_array($recordsArray)) {
-            /** @var DataHandler $tce */
-            $tce = GeneralUtility::makeInstance(DataHandler::class);
-            $tce->start([], []);
-            foreach ($recordsArray as $record) {
-                [$table, $uid] = explode(':', $record);
-                $tce->deleteAction($table, (int)$uid, false, true);
+        $tce = GeneralUtility::makeInstance(DataHandler::class);
+        $tce->start([], []);
+        $deletedCount = 0;
+        foreach ($recordsArray as $record) {
+            [$table, $uid] = explode(':', $record);
+            $errorCountBefore = count($tce->errorLog);
+            $tce->deleteAction($table, (int)$uid, false, true);
+            if (count($tce->errorLog) === $errorCountBefore) {
+                $deletedCount++;
             }
-            return true;
         }
-        return false;
+        return $deletedCount;
     }
 
     /************************************************************
@@ -505,7 +506,8 @@ class DeletedRecords
             return false;
         }
 
-        // Checking if the user has permissions? (Only working as a precaution, because the final permission check is always down in TCE. But it's good to notify the user on beforehand...)
+        // Checking if the user has permissions? (Only working as a precaution, because the final permission check
+        // is always down in TCE. But it's good to notify the user on beforehand...)
         // First, resetting flags.
         $hasAccess = false;
         $calcPRec = $row;
@@ -516,7 +518,7 @@ class DeletedRecords
                 $hasAccess = $calculatedPermissions->editPagePermissionIsGranted();
             } else {
                 $rec = BackendUtility::getRecord('pages', $calcPRec['pid'], '*', '', false);
-                $calculatedPermissions = new Permission($backendUser->calcPerms(BackendUtility::getRecord('pages', $calcPRec['pid'], '*', '', false), false));
+                $calculatedPermissions = new Permission($backendUser->calcPerms($rec, false));
                 // Fetching pid-record first.
                 $hasAccess = $calculatedPermissions->editContentPermissionIsGranted();
             }

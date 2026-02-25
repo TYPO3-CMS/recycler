@@ -157,7 +157,6 @@ class CleanerTask extends AbstractTask
      */
     public function getAllTcaTables(array &$config): void
     {
-        $options = [];
         $tcaSchemaFactory = GeneralUtility::makeInstance(TcaSchemaFactory::class);
         foreach ($tcaSchemaFactory->all() as $table => $schema) {
             if (!$schema->hasCapability(TcaSchemaCapability::SoftDelete)) {
@@ -169,6 +168,5 @@ class CleanerTask extends AbstractTask
                 'value' => $table,
             ];
         }
-        ksort($options);
     }
 }

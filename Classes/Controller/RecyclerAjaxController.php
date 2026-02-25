@@ -142,8 +142,8 @@ class RecyclerAjaxController
         }
 
         $model = GeneralUtility::makeInstance(DeletedRecords::class);
-        $success = $model->deleteData($records);
-        $affectedRecords = count($records);
+        $affectedRecords = $model->deleteData($records);
+        $success = $affectedRecords > 0;
         $messageKey = 'flashmessage.delete.' . ($success ? 'success' : 'failure') . '.' . ($affectedRecords === 1 ? 'singular' : 'plural');
 
         return new JsonResponse([
