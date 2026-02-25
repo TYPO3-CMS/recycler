@@ -19,6 +19,7 @@ namespace TYPO3\CMS\Recycler\Tests\Functional\Domain\Model;
 
 use PHPUnit\Framework\Attributes\Test;
 use TYPO3\CMS\Core\Localization\LanguageServiceFactory;
+use TYPO3\CMS\Core\Pagination\ArrayPaginator;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Recycler\Domain\Model\DeletedRecords;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
@@ -47,86 +48,86 @@ final class DeletedRecordsPaginationTest extends FunctionalTestCase
     }
 
     #[Test]
-    public function getTotalCountReturnsSameValueOnRepeatedCalls(): void
+    public function loadDataWithoutLimitLoadsAllRecordsConsistently(): void
     {
-        $model = GeneralUtility::makeInstance(DeletedRecords::class);
-        $firstTotal = $model->getTotalCount(1, '', 999, '');
-        self::assertGreaterThan(0, $firstTotal, 'Fixtures should contain deleted records');
+        $model1 = GeneralUtility::makeInstance(DeletedRecords::class);
+        $model1->loadData(1, '', 999);
+        $firstCount = $this->countFlatRecords($model1->getDeletedRows());
+        self::assertGreaterThan(0, $firstCount, 'Fixtures should contain deleted records');
 
-        // Calling loadData + getTotalCount on separate instances (as the controller does)
-        // must produce the same total.
-        $loadModel = GeneralUtility::makeInstance(DeletedRecords::class);
-        $loadModel->loadData(1, '', 999, '0,3', '');
-
-        $countModel = GeneralUtility::makeInstance(DeletedRecords::class);
-        $secondTotal = $countModel->getTotalCount(1, '', 999, '');
+        $model2 = GeneralUtility::makeInstance(DeletedRecords::class);
+        $model2->loadData(1, '', 999);
+        $secondCount = $this->countFlatRecords($model2->getDeletedRows());
 
         self::assertSame(
-            $firstTotal,
-            $secondTotal,
-            'getTotalCount must return the same value regardless of other makeInstance/loadData calls'
+            $firstCount,
+            $secondCount,
+            'Repeated loadData calls on fresh instances must return the same number of records'
         );
     }
 
     #[Test]
-    public function paginationAcrossMultipleTablesCoversAllRecordsWithoutDuplicates(): void
+    public function arrayPaginatorPaginationCoversAllRecordsWithoutDuplicates(): void
     {
         $pageSize = 3;
 
-        // Get the correct total from a fresh instance (first container access)
         $model = GeneralUtility::makeInstance(DeletedRecords::class);
-        $expectedTotal = $model->getTotalCount(1, '', 999, '');
+        $model->loadData(1, '', 999);
+
+        $flatRecords = [];
+        foreach ($model->getDeletedRows() as $tableName => $rows) {
+            foreach ($rows as $row) {
+                $flatRecords[] = ['_table' => $tableName, ...$row];
+            }
+        }
+        $expectedTotal = count($flatRecords);
         self::assertGreaterThan($pageSize, $expectedTotal, 'Need more records than page size to test pagination');
 
         $allRecords = [];
-        $offset = 0;
-        $maxIterations = 20;
+        $totalPages = (int)ceil($expectedTotal / $pageSize);
+        for ($page = 1; $page <= $totalPages; $page++) {
+            $paginator = new ArrayPaginator($flatRecords, $page, $pageSize);
+            $pageItems = $paginator->getPaginatedItems();
 
-        while ($offset < $expectedTotal && $maxIterations-- > 0) {
-            $pageModel = GeneralUtility::makeInstance(DeletedRecords::class);
-            $pageModel->loadData(1, '', 999, $offset . ',' . $pageSize, '');
-            $rows = $pageModel->getDeletedRows();
-
-            $pageRecords = [];
-            foreach ($rows as $table => $tableRows) {
-                foreach ($tableRows as $row) {
-                    $pageRecords[] = $table . ':' . $row['uid'];
-                }
-            }
-
-            // Each full page must have exactly $pageSize records
-            if ($offset + $pageSize <= $expectedTotal) {
+            if ($page < $totalPages) {
                 self::assertCount(
                     $pageSize,
-                    $pageRecords,
-                    'Page at offset ' . $offset . ' should have exactly ' . $pageSize . ' records'
+                    $pageItems,
+                    'Page ' . $page . ' should have exactly ' . $pageSize . ' records'
                 );
             } else {
-                // Last page: should have the remainder
-                $expectedRemainder = $expectedTotal - $offset;
+                $expectedRemainder = $expectedTotal - ($totalPages - 1) * $pageSize;
                 self::assertCount(
                     $expectedRemainder,
-                    $pageRecords,
-                    'Last page at offset ' . $offset . ' should have ' . $expectedRemainder . ' records'
+                    $pageItems,
+                    'Last page should have ' . $expectedRemainder . ' records'
                 );
             }
 
-            $allRecords = array_merge($allRecords, $pageRecords);
-            $offset += $pageSize;
+            foreach ($pageItems as $item) {
+                $allRecords[] = $item['_table'] . ':' . $item['uid'];
+            }
         }
 
-        // No duplicates across pages
         self::assertCount(
             count($allRecords),
             array_unique($allRecords),
             'No duplicate records should appear across pages'
         );
 
-        // All records covered
         self::assertCount(
             $expectedTotal,
             $allRecords,
             'Pagination must cover all ' . $expectedTotal . ' deleted records'
         );
+    }
+
+    private function countFlatRecords(array $deletedRows): int
+    {
+        $count = 0;
+        foreach ($deletedRows as $rows) {
+            $count += count($rows);
+        }
+        return $count;
     }
 }

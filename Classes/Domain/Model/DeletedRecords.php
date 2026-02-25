@@ -50,16 +50,6 @@ class DeletedRecords
      */
     protected array $deletedRows = [];
 
-    /**
-     * String with the global limit
-     */
-    protected string $limit = '';
-
-    /**
-     * Array with all available tables
-     */
-    protected array $table = [];
-
     public function __construct(
         private readonly TcaSchemaFactory $tcaSchemaFactory,
         #[Autowire(service: 'cache.runtime')]
@@ -67,58 +57,27 @@ class DeletedRecords
     ) {}
 
     /**
-     * Load all deleted rows from $table
-     * If table is not set, it iterates the TCA tables
+     * Load all deleted rows from $table.
+     * If table is not set, it iterates the TCA tables.
      *
      * @param int $id UID from selected page
      * @param string $table Tablename
      * @param int $depth How many levels recursive
-     * @param string $limit MySQL LIMIT
      * @param string $filter Filter text
      */
-    public function loadData(int $id, string $table, int $depth, string $limit = '', string $filter = ''): self
+    public function loadData(int $id, string $table, int $depth, string $filter = ''): self
     {
-        // set the limit
-        $this->limit = trim($limit);
         if ($table) {
             $schemata = $this->getRelevantSchemata();
             if (array_key_exists($table, $schemata)) {
-                $this->table[] = $table;
                 $this->setData($id, $schemata[$table], $depth, $filter);
             }
         } else {
-            foreach ($this->getRelevantSchemata() as $tableKey => $schema) {
-                // only go into this table if the limit allows it
-                if ($this->limit !== '') {
-                    $parts = GeneralUtility::intExplode(',', $this->limit, true);
-                    // abort loop if LIMIT 0,0
-                    if ($parts[0] === 0 && $parts[1] === 0) {
-                        break;
-                    }
-                }
-                $this->table[] = $tableKey;
+            foreach ($this->getRelevantSchemata() as $schema) {
                 $this->setData($id, $schema, $depth, $filter);
             }
         }
         return $this;
-    }
-
-    /**
-     * Find the total count of deleted records
-     *
-     * @param int $id UID from record
-     * @param string $table Tablename from record
-     * @param int $depth How many levels recursive
-     * @param string $filter Filter text
-     */
-    public function getTotalCount(int $id, string $table, int $depth, string $filter): int
-    {
-        $deletedRecords = $this->loadData($id, $table, $depth, '', $filter)->getDeletedRows();
-        $countTotal = 0;
-        foreach ($this->table as $tableName) {
-            $countTotal += count($deletedRecords[$tableName] ?? []);
-        }
-        return $countTotal;
     }
 
     /**
@@ -128,108 +87,33 @@ class DeletedRecords
      * @param int $depth How many levels recursive
      * @param string $filter Filter text
      */
-    protected function setData($id, TcaSchema $schema, $depth, $filter): void
+    protected function setData(int $id, TcaSchema $schema, int $depth, string $filter): void
     {
         $deletedField = $schema->getCapability(TcaSchemaCapability::SoftDelete)->getFieldName();
         if (!$deletedField) {
             return;
         }
 
-        $id = (int)$id;
-        $firstResult = 0;
-        $maxResults = 0;
-
-        // get the limit
-        if (!empty($this->limit)) {
-            // count the number of deleted records for this pid
-            $queryBuilder = $this->getFilteredQueryBuilder($schema, $id, $depth, $filter);
-
-            $deletedCount = (int)$queryBuilder
-                ->count('*')
-                ->from($schema->getName())
-                ->andWhere(
-                    $queryBuilder->expr()->neq(
-                        $deletedField,
-                        $queryBuilder->createNamedParameter(0, Connection::PARAM_INT)
-                    )
+        $queryBuilder = $this->getFilteredQueryBuilder($schema, $id, $depth, $filter);
+        $queryBuilder = $queryBuilder->select('*')
+            ->from($schema->getName())
+            ->andWhere(
+                $queryBuilder->expr()->eq(
+                    $deletedField,
+                    $queryBuilder->createNamedParameter(1, Connection::PARAM_INT)
                 )
-                ->executeQuery()
-                ->fetchOne();
+            );
 
-            // split the limit
-            [$offset, $rowCount] = GeneralUtility::intExplode(',', $this->limit, true);
-            // subtract the number of deleted records from the limit's offset
-            $result = $offset - $deletedCount;
-            // if the result is >= 0
-            if ($result >= 0) {
-                // store the new offset in the limit and go into the next depth
-                $offset = $result;
-                $this->limit = implode(',', [$offset, $rowCount]);
-                // do NOT query this depth; limit also does not need to be set, we set it anyways
-                $allowQuery = false;
-            } else {
-                // the offset for the temporary limit has to remain like the original offset
-                // in case the original offset was just crossed by the amount of deleted records
-                $tempOffset = 0;
-                if ($offset !== 0) {
-                    $tempOffset = $offset;
-                }
-                // set the offset in the limit to 0
-                $newOffset = 0;
-                // convert to negative result to the positive equivalent
-                $absResult = abs($result);
-                // if the result now is > limit's row count
-                if ($absResult > $rowCount) {
-                    // use the limit's row count as the temporary limit
-                    $firstResult = $tempOffset;
-                    $maxResults = $rowCount;
-                    // set the limit's row count to 0
-                    $this->limit = implode(',', [$newOffset, 0]);
-                } else {
-                    // if the result now is <= limit's row count
-                    // use the result as the temporary limit
-                    $firstResult = $tempOffset;
-                    $maxResults = $absResult;
-                    // subtract the result from the row count
-                    $newCount = $rowCount - $absResult;
-                    // store the new result in the limit's row count
-                    $this->limit = implode(',', [$newOffset, $newCount]);
-                }
-                // allow query for this depth
-                $allowQuery = true;
-            }
+        if ($schema->hasCapability(TcaSchemaCapability::UpdatedAt)) {
+            $queryBuilder = $queryBuilder
+                ->orderBy($schema->getCapability(TcaSchemaCapability::UpdatedAt)->getFieldName(), 'desc')
+                ->addOrderBy('uid');
         } else {
-            $allowQuery = true;
+            $queryBuilder = $queryBuilder->orderBy('uid');
         }
-        // query for actual deleted records
-        if ($allowQuery) {
-            $queryBuilder = $this->getFilteredQueryBuilder($schema, $id, $depth, $filter);
-            if ($firstResult) {
-                $queryBuilder->setFirstResult($firstResult);
-            }
-            if ($maxResults) {
-                $queryBuilder->setMaxResults($maxResults);
-            }
-            $queryBuilder = $queryBuilder->select('*')
-                ->from($schema->getName())
-                ->andWhere(
-                    $queryBuilder->expr()->eq(
-                        $deletedField,
-                        $queryBuilder->createNamedParameter(1, Connection::PARAM_INT)
-                    )
-                );
-
-            if ($schema->hasCapability(TcaSchemaCapability::UpdatedAt)) {
-                $queryBuilder = $queryBuilder
-                    ->orderBy($schema->getCapability(TcaSchemaCapability::UpdatedAt)->getFieldName(), 'desc')
-                    ->addOrderBy('uid');
-            } else {
-                $queryBuilder = $queryBuilder->orderBy('uid');
-            }
-            $recordsToCheck = $queryBuilder->executeQuery()->fetchAllAssociative();
-            if ($recordsToCheck !== []) {
-                $this->checkRecordAccess($schema->getName(), $recordsToCheck);
-            }
+        $recordsToCheck = $queryBuilder->executeQuery()->fetchAllAssociative();
+        if ($recordsToCheck !== []) {
+            $this->checkRecordAccess($schema->getName(), $recordsToCheck);
         }
     }
 
@@ -368,7 +252,7 @@ class DeletedRecords
             $cmd[$table][$uid]['undelete'] = 1;
             $affectedRecords++;
             if ($table === 'pages' && $recursive) {
-                $this->loadData($uid, '', $depth, '');
+                $this->loadData($uid, '', $depth);
                 $childRecords = $this->getDeletedRows();
                 if (!empty($childRecords)) {
                     foreach ($childRecords as $childTable => $childRows) {

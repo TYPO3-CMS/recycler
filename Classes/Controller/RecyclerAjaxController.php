@@ -32,6 +32,7 @@ use TYPO3\CMS\Core\Http\JsonResponse;
 use TYPO3\CMS\Core\Imaging\IconFactory;
 use TYPO3\CMS\Core\Imaging\IconSize;
 use TYPO3\CMS\Core\Localization\LanguageService;
+use TYPO3\CMS\Core\Pagination\ArrayPaginator;
 use TYPO3\CMS\Core\Schema\Capability\TcaSchemaCapability;
 use TYPO3\CMS\Core\Schema\TcaSchema;
 use TYPO3\CMS\Core\Schema\TcaSchemaFactory;
@@ -71,31 +72,44 @@ class RecyclerAjaxController
     {
         $queryParams = $request->getQueryParams();
         $table = (string)($queryParams['table'] ?? '');
-        $limit = MathUtility::forceIntegerInRange(
+        $itemsPerPage = MathUtility::forceIntegerInRange(
             (int)($this->getBackendUser()->getTSConfig()['mod.']['recycler.']['recordsPageLimit'] ?? 25),
             1
         );
         $start = (int)($queryParams['start'] ?? 0);
+        $currentPage = (int)floor($start / $itemsPerPage) + 1;
         $filterTxt = (string)($queryParams['filterTxt'] ?? '');
         $startUid = (int)($queryParams['startUid'] ?? 0);
         $depth = (int)($queryParams['depth'] ?? 0);
 
         $model = GeneralUtility::makeInstance(DeletedRecords::class);
-        $model->loadData($startUid, $table, $depth, $start . ',' . $limit, $filterTxt);
-        $deletedRowsArray = $model->getDeletedRows();
+        $model->loadData($startUid, $table, $depth, $filterTxt);
 
-        $model = GeneralUtility::makeInstance(DeletedRecords::class);
-        $totalDeleted = $model->getTotalCount($startUid, $table, $depth, $filterTxt);
+        $flatRecords = [];
+        foreach ($model->getDeletedRows() as $tableName => $rows) {
+            foreach ($rows as $row) {
+                $flatRecords[] = ['_table' => $tableName, ...$row];
+            }
+        }
+
+        $paginator = new ArrayPaginator($flatRecords, $currentPage, $itemsPerPage);
+
+        $paginatedGrouped = [];
+        foreach ($paginator->getPaginatedItems() as $item) {
+            $tableName = $item['_table'];
+            unset($item['_table']);
+            $paginatedGrouped[$tableName][] = $item;
+        }
 
         $view = $this->backendViewFactory->create($request);
         $view->assign('showTableHeader', empty($table));
         $view->assign('showTableName', $this->getBackendUser()->shallDisplayDebugInformation());
         $view->assign('allowDelete', $this->isDeleteAllowed());
-        $view->assign('groupedRecords', $this->transform($deletedRowsArray));
+        $view->assign('groupedRecords', $this->transform($paginatedGrouped));
 
         return new JsonResponse([
             'rows' => $view->render('Ajax/RecordsTable'),
-            'totalItems' => $totalDeleted,
+            'totalItems' => count($flatRecords),
         ]);
     }
 
